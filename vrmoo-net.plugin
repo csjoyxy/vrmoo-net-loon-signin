@@ -1,7 +1,7 @@
 #!name = 魔趣自动签到(vrmoo.net)
 #!desc = 魔趣 vrmoo.net / vrmoo.vip 每日自动签到：访问网站时自动捕获 Cookie，每天定时执行签到（兼容带/不带 www）
 #!author = Hermes Agent
-#!version = 1.0.1
+#!version = 1.0.3
 #!homepage = https://github.com/csjoyxy/vrmoo-net-loon-signin
 #!icon = https://raw.githubusercontent.com/Koolson/Qure/master/IconSet/Color/Sign.png
 #!tag = signin,checkin,vrmoo,魔趣,loon
