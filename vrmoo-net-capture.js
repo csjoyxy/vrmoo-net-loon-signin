@@ -5,8 +5,11 @@
  * 匹配：^https?://(www\.)?vrmoo\.(net|vip)/
  * 功能：访问魔趣任意页面时，自动从请求头提取 Cookie
  *       (b2_token / wordpress_logged_in_* / PHPSESSID) 持久化，并记录所用域名。
+ *       v1.0.3 起：额外原样保存「完整 Cookie 头」(vrmoo_raw_cookie)，
+ *       签到时优先透传，避免重拼遗漏关键项。
  */
 const COOKIE_KEY  = "vrmoo_cookies";
+const RAW_KEY     = "vrmoo_raw_cookie";
 const HOST_KEY    = "vrmoo_host";
 const B2_KEY      = "vrmoo_b2_token";
 const WP_KEY      = "vrmoo_wp_cookie";
@@ -22,7 +25,7 @@ if (typeof $request === 'undefined' || !$request || !$request.headers) {
     if (typeof $done === 'function') { $done({}); }
 } else {
     const headers = $request.headers;
-    const raw = headers["Cookie"] || headers["cookie"] || "";
+    const raw = (headers["Cookie"] || headers["cookie"] || "").trim();
     if (!raw) { $done({}); return; }
 
     // 记录实际使用的域名（带/不带 www，.net 或 .vip），签到时回打同一域名
@@ -48,6 +51,10 @@ if (typeof $request === 'undefined' || !$request || !$request.headers) {
         }
     }
 
+    // 原样保存完整 Cookie 头（签到优先透传此值）
+    $persistentStore.write(raw, RAW_KEY);
+    changed = true;
+
     if (changed) {
         const b2 = cookies["b2_token"] || $persistentStore.read(B2_KEY) || "";
         const ph = cookies["PHPSESSID"] || $persistentStore.read(PHP_KEY) || "";
@@ -64,7 +71,7 @@ if (typeof $request === 'undefined' || !$request || !$request.headers) {
 
         $persistentStore.write(full, COOKIE_KEY);
         $persistentStore.write(host, HOST_KEY);
-        console.log("[vrmoo] Cookie captured for " + host);
+        console.log("[vrmoo] Cookie captured for " + host + " (raw len=" + raw.length + ")");
         $notification.post("魔趣", "Cookie已捕获", "域名: " + host + "（之后自动签到）");
     }
     $done({});

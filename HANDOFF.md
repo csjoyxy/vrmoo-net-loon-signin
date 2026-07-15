@@ -58,13 +58,19 @@
   参考片段：
   ```python
   import subprocess, re
-  tok = re.search(r'^GITHUB_TOKEN=(.+)$', open("C:/Users/lili/AppData/Local/hermes/.env", encoding="utf-8").read(), re.MULTILINE).group(1).strip()
+  env_txt = open("C:/Users/lili/AppData/Local/hermes/.env", encoding="utf-8").read()
+  tok = ""
+  for ln in env_txt.splitlines():
+      if ln.startswith("GITHUB_TOKEN="):
+          tok = ln.split("=", 1)[1].strip()
+          break
   REPO="vrmoo-net-loon-signin"; LOGIN="csjoyxy"
   wd="C:/Users/lili/AppData/Local/hermes/workspace/vrmoo-net"
   run=lambda c: subprocess.run(c, capture_output=True, text=True)
   run(["git","-C",wd,"add","-A"])
   run(["git","-C",wd,"commit","-q","-m","msg"])
-  run(["git","-C",wd,"push","-u","origin","https://%s@github.com/%s/%s.git"%(tok,LOGIN,REPO)])
+  run(["git","-C",wd,"remote","add","origin","https://%s@github.com/%s/%s.git"%(tok,LOGIN,REPO)])
+  run(["git","-C",wd,"push","-u","origin","main"])
   ```
 - **raw.githubusercontent.com 在本机 curl 报 `CRYPT_E_REVOCATION_OFFLINE`**：用 `curl -k` 或 GitHub API（base64）取文件。
 - **GitHub 未认证 API 限流 60次/小时/IP**：批量抓文件会超，换 `-k` raw 或认证。
