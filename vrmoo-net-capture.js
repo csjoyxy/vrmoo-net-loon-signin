@@ -1,27 +1,31 @@
 /**
- * 魔趣(vrmoo.net / vrmoo.vip) Cookie 自动捕获脚本 - Loon 版
+ * 魔趣(vrmoo.net / vrmoo.vip) Cookie 自动捕获 - Loon 版
+ * 类型：http-response（由浏览自动触发，请勿手动运行）
  *
- * 类型：http-response
- * 匹配：^https://www\.(vrmoo\.net|vrmoo\.vip)/
- *
- * 功能：在 Safari 中访问魔趣任意页面时，自动从请求头提取 Cookie
- *       (b2_token / wordpress_logged_in_* / PHPSESSID) 并持久化存储，
- *       同时记录本次登录使用的域名，供签到脚本回打。
+ * 匹配：^https?://(www\.)?vrmoo\.(net|vip)/
+ * 功能：访问魔趣任意页面时，自动从请求头提取 Cookie
+ *       (b2_token / wordpress_logged_in_* / PHPSESSID) 持久化，并记录所用域名。
  */
-const COOKIE_KEY   = "vrmoo_cookies";
-const HOST_KEY     = "vrmoo_host";
-const B2_KEY       = "vrmoo_b2_token";
-const WP_KEY       = "vrmoo_wp_cookie";
-const PHP_KEY      = "vrmoo_phpsessid";
-const WP_NAME_KEY  = "vrmoo_wp_cookie_name";
-const WP_PREFIX    = "wordpress_logged_in_";
+const COOKIE_KEY  = "vrmoo_cookies";
+const HOST_KEY    = "vrmoo_host";
+const B2_KEY      = "vrmoo_b2_token";
+const WP_KEY      = "vrmoo_wp_cookie";
+const PHP_KEY     = "vrmoo_phpsessid";
+const WP_NAME_KEY = "vrmoo_wp_cookie_name";
+const WP_PREFIX   = "wordpress_logged_in_";
 
-if ($request && $request.headers) {
+// 手动运行 / 非 http-response 上下文：直接退出，避免 ReferenceError
+if (typeof $request === 'undefined' || !$request || !$request.headers) {
+    if (typeof $notification !== 'undefined') {
+        $notification.post("魔趣捕获", "提示", "此脚本由浏览自动触发，请勿手动运行");
+    }
+    if (typeof $done === 'function') { $done({}); }
+} else {
     const headers = $request.headers;
     const raw = headers["Cookie"] || headers["cookie"] || "";
     if (!raw) { $done({}); return; }
 
-    // 记录实际使用的域名（.net 或 .vip），签到时回打同一域名
+    // 记录实际使用的域名（带/不带 www，.net 或 .vip），签到时回打同一域名
     let host = "www.vrmoo.net";
     const um = ($request.url || "").match(/^https?:\/\/([^/]+)/);
     if (um) host = um[1];
@@ -61,9 +65,7 @@ if ($request && $request.headers) {
         $persistentStore.write(full, COOKIE_KEY);
         $persistentStore.write(host, HOST_KEY);
         console.log("[vrmoo] Cookie captured for " + host);
-        $notification.post("魔趣", "Cookie已捕获", "域名: " + host + " (可关闭页面，之后自动签到)");
+        $notification.post("魔趣", "Cookie已捕获", "域名: " + host + "（之后自动签到）");
     }
-    $done({});
-} else {
     $done({});
 }
