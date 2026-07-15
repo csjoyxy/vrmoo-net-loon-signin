@@ -1,87 +1,147 @@
 /**
- * 魔趣(vrmoo.net / vrmoo.vip) 每日自动签到脚本 - Loon 版
+ * 魔趣(vrmoo.net / vrmoo.vip) 每日自动签到 - Loon 版（诊断增强 v1.0.2）
+ * 类型：cron（可手动运行测试）
  *
- * 类型：cron (建议: 0 8 * * *)
- * 功能：读取持久化的 Cookie，向 b2 主题签到接口 POST 完成每日签到。
- *
- * 接口：https://<host>/wp-json/b2/v1/userMission   (POST, 无需 body)
- * 验证：未登录返回 {"code":"user_error","message":"请先登录"} → 提示重新登录
+ * 逻辑：读取捕获的登录 Cookie，POST 到 /wp-json/b2/v1/userMission 完成每日签到。
+ *      若主域名返回“未登录”，自动用 www<->apex 互换的备用域名重试一次
+ *      （Cookie 常因域名差这一层而失效）。
  */
 const COOKIE_KEY  = "vrmoo_cookies";
 const HOST_KEY    = "vrmoo_host";
 const B2_KEY      = "vrmoo_b2_token";
 const WP_KEY      = "vrmoo_wp_cookie";
-const PHP_KEY      = "vrmoo_phpsessid";
+const PHP_KEY     = "vrmoo_phpsessid";
 const WP_NAME_KEY = "vrmoo_wp_cookie_name";
 
 function getCookieAndHost() {
-    const host = $persistentStore.read(HOST_KEY) || "www.vrmoo.net";
-    const s = $persistentStore.read(COOKIE_KEY);
-    if (s && s.length > 20) return { cookie: s, host };
-
-    // 兜底：从分项重建完整 Cookie 串
-    const b2 = $persistentStore.read(B2_KEY) || "";
-    const wn = $persistentStore.read(WP_NAME_KEY) || "";
-    const wv = $persistentStore.read(WP_KEY) || "";
-    const ph = $persistentStore.read(PHP_KEY) || "";
-    if (b2 || (wn && wv)) {
-        const p = [];
-        if (b2) p.push("b2_token=" + b2);
-        if (wn && wv) p.push(wn + "=" + wv);
-        if (ph) p.push("PHPSESSID=" + ph);
-        p.push("night=0");
-        p.push("gg_info=" + Math.floor(Date.now() / 1000));
-        return { cookie: p.join("; "), host };
+    const cookie = $persistentStore.read(COOKIE_KEY) || "";
+    let host = $persistentStore.read(HOST_KEY) || "www.vrmoo.net";
+    if (!cookie) {
+        // 兜底：用各组件拼一份
+        const b2 = $persistentStore.read(B2_KEY) || "";
+        const ph = $persistentStore.read(PHP_KEY) || "";
+        const wn = $persistentStore.read(WP_NAME_KEY) || "";
+        const wv = $persistentStore.read(WP_KEY) || "";
+        const full = [b2 ? "b2_token=" + b2 : "",
+                      (wn && wv) ? wn + "=" + wv : "",
+                      ph ? "PHPSESSID=" + ph : "",
+                      "night=0",
+                      "gg_info=" + Math.floor(Date.now() / 1000)].filter(Boolean).join("; ");
+        if (full) { return { cookie: full, host }; }
+        return { cookie: "", host };
     }
-    return { cookie: "", host };
+    return { cookie, host };
 }
 
-function doSignIn(host, cookie) {
-    const SIGN_URL = "https://" + host + "/wp-json/b2/v1/userMission";
-    $httpClient.post(SIGN_URL, {
-        "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 16_4_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.4 Mobile/15E148 Safari/604.1",
+function altHost(h) {
+    if (h.startsWith("www.")) return h.slice(4);
+    return "www." + h;
+}
+
+function diag(cookie) {
+    const b2 = $persistentStore.read(B2_KEY) ? "Y" : "N";
+    const ph = $persistentStore.read(PHP_KEY) ? "Y" : "N";
+    const wn = $persistentStore.read(WP_NAME_KEY) ? "Y" : "N";
+    const wv = $persistentStore.read(WP_KEY) ? "Y" : "N";
+    return `b2:${b2} wpName:${wn} wpVal:${wv} phpsessid:${ph}`;
+}
+
+function signinOnce(host, cookie, cb) {
+    const url = "https://" + host + "/wp-json/b2/v1/userMission";
+    const headers = {
+        "Cookie": cookie,
+        "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1",
         "Accept": "application/json, text/plain, */*",
-        "Accept-Language": "zh-CN,zh-Hans;q=0.9",
-        "Accept-Encoding": "gzip, deflate, br",
-        "Origin": "https://" + host,
         "Referer": "https://" + host + "/",
-        "Cookie": cookie
-    }, "", function (err, resp, data) {
-        if (err) {
-            $notification.post("魔趣签到", "网络错误", String(err));
-            $done();
-            return;
-        }
-        console.log("[vrmoo-signin] HTTP " + (resp ? resp.status : "?") + " | " + (data || "").substring(0, 200));
-        try {
-            const j = JSON.parse(data);
-            if (j.code === "user_error" || (j.message && j.message.indexOf("登录") > -1)) {
-                $notification.post("魔趣签到", "Cookie 失效", "请在 Safari 重新登录 " + host);
-            } else if (j.credit || j.mission) {
-                const c = j.credit || (j.mission && j.mission.credit) || "?";
-                const t = (j.mission && j.mission.my_credit) || "?";
-                const d = (j.mission && j.mission.always) || "?";
-                $notification.post("魔趣签到", "签到成功", "+" + c + "积分 | 总:" + t + " | 连续" + d + "天");
-            } else if (data && data.indexOf("已经") > -1) {
-                $notification.post("魔趣签到", "今日已签到", "无需重复");
-            } else {
-                $notification.post("魔趣签到", "未知响应", (data || "").substring(0, 100));
-            }
-        } catch (e) {
-            if (data && data.indexOf("已经") > -1) {
-                $notification.post("魔趣签到", "今日已签到", "无需重复");
-            } else {
-                $notification.post("魔趣签到", "响应解析失败", (data || "").substring(0, 100));
-            }
-        }
-        $done();
+        "Origin": "https://" + host,
+        "X-Requested-With": "XMLHttpRequest"
+    };
+    const opts = { headers: headers, body: "" };
+    console.log("[vrmoo] POST " + url);
+    $httpClient.post(url, opts, function (err, resp, data) {
+        let status = resp && resp.status ? resp.status : (resp && resp.statusCode ? resp.statusCode : "?");
+        console.log("[vrmoo] status=" + status + " err=" + (err || "null") + " data=" + (data || "").slice(0, 300));
+        cb(err, status, data || "");
     });
 }
 
-const r = getCookieAndHost();
-if (!r.cookie) {
-    $notification.post("魔趣签到", "无 Cookie", "请在 Safari 打开 vrmoo 登录一次");
-    $done();
-} else {
-    doSignIn(r.host, r.cookie);
+function notify(title, subtitle, body) {
+    if (typeof $notification !== 'undefined') {
+        $notification.post(title, subtitle, body);
+    }
 }
+
+function main() {
+    const { cookie, host } = getCookieAndHost();
+    if (!cookie) {
+        notify("魔趣签到", "失败", "无Cookie：请先在 Safari 通过 Loon 登录 vrmoo.net");
+        console.log("[vrmoo] no cookie");
+        $done();
+        return;
+    }
+    console.log("[vrmoo] host=" + host + " diag=" + diag(cookie));
+
+    signinOnce(host, cookie, function (err, status, data) {
+        if (err) {
+            // 网络错误，尝试备用域名
+            const ah = altHost(host);
+            console.log("[vrmoo] err on " + host + ", retry " + ah);
+            signinOnce(ah, cookie, function (err2, status2, data2) {
+                if (err2) {
+                    notify("魔趣签到", "网络错误", String(err2).slice(0, 200) + " | diag:" + diag(cookie));
+                    $done();
+                    return;
+                }
+                finish(status2, data2, ah, cookie);
+            });
+            return;
+        }
+        // 判断是否“未登录”
+        let notLogin = false;
+        try {
+            const j = JSON.parse(data);
+            if (j && (j.code === "user_error" || (j.message && j.message.indexOf("登录") >= 0))) notLogin = true;
+        } catch (e) {}
+        if (notLogin) {
+            const ah = altHost(host);
+            console.log("[vrmoo] notLogin on " + host + ", retry " + ah);
+            signinOnce(ah, cookie, function (err2, status2, data2) {
+                if (err2) {
+                    notify("魔趣签到", "失败", "主域未登录且备用域网络错误: " + String(err2).slice(0, 120) + " | diag:" + diag(cookie));
+                    $done();
+                    return;
+                }
+                finish(status2, data2, ah, cookie);
+            });
+            return;
+        }
+        finish(status, data, host, cookie);
+    });
+}
+
+function finish(status, data, usedHost, cookie) {
+    let title = "魔趣签到", sub = "", body = "";
+    try {
+        const j = JSON.parse(data);
+        if (j && j.code === "success") {
+            sub = "成功";
+            let credit = "";
+            if (j.data) {
+                credit = j.data.credit != null ? j.data.credit
+                       : (j.data.mission && j.data.mission.credit != null) ? j.data.mission.credit
+                       : (j.data.mission && j.data.mission.my_credit != null) ? j.data.mission.my_credit : "";
+            }
+            body = (credit !== "" ? ("+积分 " + credit + "；") : "") + (j.message || "");
+        } else {
+            sub = "失败(" + (j.code || status) + ")";
+            body = (j.message || data || "未知返回") + " | diag:" + diag(cookie);
+        }
+    } catch (e) {
+        sub = "返回非JSON(" + status + ")";
+        body = "前200字: " + String(data).slice(0, 200) + " | diag:" + diag(cookie);
+    }
+    notify(title, sub, body);
+    $done();
+}
+
+main();
